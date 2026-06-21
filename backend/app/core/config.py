@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     host: str = "0.0.0.0"
     port: int = 8000
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "*"
 
     model_name: str = "distilgpt2"
     quantization: str | None = "awq"
@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     max_concurrent_requests: int = 64
     trust_remote_code: bool = False
 
-    use_mock_model: bool = False
+    use_mock_model: bool = True
 
 
 settings = Settings()

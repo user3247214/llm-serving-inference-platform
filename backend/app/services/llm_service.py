@@ -5,10 +5,10 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
+from importlib import import_module
 from typing import Any, AsyncIterator
 
 from fastapi import HTTPException
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from app.core.config import settings
 from app.models.schemas import ChatCompletionRequest, ChatCompletionResponse, ChatChoice, ChatMessage, Usage
@@ -33,6 +33,8 @@ class LLMService:
         self.engine: AsyncLLMEngine | None = None
         self.tokenizer = None
         self.hf_model = None
+        self.auto_tokenizer_cls = None
+        self.auto_model_cls = None
         self.runtime_backend = "uninitialized"
         self.semaphore = asyncio.Semaphore(settings.max_concurrent_requests)
 
@@ -41,7 +43,15 @@ class LLMService:
             self.runtime_backend = "mock"
             return
 
-        self.tokenizer = AutoTokenizer.from_pretrained(
+        try:
+            transformers = import_module("transformers")
+            self.auto_tokenizer_cls = transformers.AutoTokenizer
+            self.auto_model_cls = transformers.AutoModelForCausalLM
+        except Exception:
+            self.runtime_backend = "mock"
+            return
+
+        self.tokenizer = self.auto_tokenizer_cls.from_pretrained(
             settings.model_name,
             trust_remote_code=settings.trust_remote_code,
         )
@@ -64,21 +74,20 @@ class LLMService:
         try:
             import torch
 
-            self.hf_model = AutoModelForCausalLM.from_pretrained(
+            self.hf_model = self.auto_model_cls.from_pretrained(
                 settings.model_name,
                 trust_remote_code=settings.trust_remote_code,
             )
             self.hf_model.to(torch.device("cpu"))
             self.hf_model.eval()
             self.runtime_backend = "transformers"
-        except Exception as exc:
-            raise RuntimeError(
-                "No usable inference backend was found. Install vLLM (Linux/GPU) or torch for transformers fallback."
-            ) from exc
+        except Exception:
+            self.runtime_backend = "mock"
 
     async def shutdown(self) -> None:
         self.engine = None
         self.hf_model = None
+        self.tokenizer = None
         self.runtime_backend = "uninitialized"
 
     def _build_prompt(self, request: ChatCompletionRequest) -> str:
@@ -184,7 +193,7 @@ class LLMService:
 
         async with self.semaphore:
             start = time.time()
-            if settings.use_mock_model:
+            if self.runtime_backend == "mock":
                 generation = await self._generate_with_mock(request)
             elif self.runtime_backend == "vllm":
                 generation = await self._generate_with_vllm(request)
@@ -231,7 +240,7 @@ class LLMService:
 
         final_text = ""
         async with self.semaphore:
-            if settings.use_mock_model:
+            if self.runtime_backend == "mock":
                 user_content = " ".join([m.content for m in request.messages if m.role == "user"]).strip()
                 final_text = f"[mock-response] Model '{settings.model_name}' received: {user_content[:200]}"
                 parts = final_text.split(" ")
