@@ -123,44 +123,24 @@ class LLMService:
         return f"data: {payload}\n\n"
 
     async def _generate_with_groq(self, request: ChatCompletionRequest) -> GenerationResult:
-        import urllib.request
+        from groq import AsyncGroq
 
-        messages = [{"role": m.role, "content": m.content} for m in request.messages]
         model = settings.model_name if settings.model_name != "distilgpt2" else "llama-3.1-8b-instant"
-        payload = json.dumps({
-            "model": model,
-            "messages": messages,
-            "max_tokens": request.max_tokens,
-            "temperature": request.temperature,
-            "stream": False,
-        }).encode()
+        messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
-        req = urllib.request.Request(
-            "https://api.groq.com/openai/v1/chat/completions",
-            data=payload,
-            headers={
-                "Authorization": f"Bearer {settings.groq_api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
+        client = AsyncGroq(api_key=settings.groq_api_key)
+        completion = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
         )
-
-        def _call() -> dict:
-            import urllib.error
-            try:
-                with urllib.request.urlopen(req, timeout=60) as resp:
-                    return json.loads(resp.read())
-            except urllib.error.HTTPError as e:
-                body = e.read().decode("utf-8", errors="replace")
-                raise RuntimeError(f"Groq API error {e.code}: {body}") from e
-
-        data = await asyncio.to_thread(_call)
-        content = data["choices"][0]["message"]["content"]
-        usage = data.get("usage", {})
+        content = completion.choices[0].message.content or ""
+        usage = completion.usage
         return GenerationResult(
             text=content,
-            prompt_tokens=usage.get("prompt_tokens", self._token_estimate(" ".join(m.content for m in request.messages))),
-            completion_tokens=usage.get("completion_tokens", self._token_estimate(content)),
+            prompt_tokens=usage.prompt_tokens if usage else self._token_estimate(" ".join(m.content for m in request.messages)),
+            completion_tokens=usage.completion_tokens if usage else self._token_estimate(content),
         )
 
     async def _generate_with_vllm(self, request: ChatCompletionRequest) -> GenerationResult:
