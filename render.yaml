@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: llm-serving-backend
+    env: docker
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: MODEL_NAME
+        value: distilgpt2
+      - key: USE_MOCK_MODEL
+        value: "false"
+      - key: CORS_ORIGINS
+        value: https://your-frontend.vercel.app

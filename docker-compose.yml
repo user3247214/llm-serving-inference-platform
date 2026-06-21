@@ -1,0 +1,20 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: llm-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env.example
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: llm-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+    depends_on:
+      - backend
