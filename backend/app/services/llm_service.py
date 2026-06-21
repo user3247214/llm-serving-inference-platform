@@ -39,8 +39,8 @@ class LLMService:
         self.semaphore = asyncio.Semaphore(settings.max_concurrent_requests)
 
     async def startup(self) -> None:
-        if settings.groq_api_key:
-            self.runtime_backend = "groq"
+        if settings.use_mock_model:
+            self.runtime_backend = "mock"
             return
 
         try:

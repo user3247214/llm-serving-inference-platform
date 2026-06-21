@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     port: int = 8000
     cors_origins: str = "*"
 
-    model_name: str = "distilgpt2"
+    model_name: str = "sshleifer/tiny-gpt2"
     quantization: str | None = "awq"
     dtype: str = "auto"
     tensor_parallel_size: int = 1
@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     max_concurrent_requests: int = 64
     trust_remote_code: bool = False
 
-    use_mock_model: bool = True
+    use_mock_model: bool = False
     groq_api_key: str = ""
 
 
