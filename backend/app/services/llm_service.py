@@ -146,8 +146,13 @@ class LLMService:
         )
 
         def _call() -> dict:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                return json.loads(resp.read())
+            import urllib.error
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    return json.loads(resp.read())
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", errors="replace")
+                raise RuntimeError(f"Groq API error {e.code}: {body}") from e
 
         data = await asyncio.to_thread(_call)
         content = data["choices"][0]["message"]["content"]
