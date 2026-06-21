@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     trust_remote_code: bool = False
 
     use_mock_model: bool = True
+    groq_api_key: str = ""
 
 
 settings = Settings()

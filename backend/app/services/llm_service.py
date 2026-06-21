@@ -43,6 +43,10 @@ class LLMService:
             self.runtime_backend = "mock"
             return
 
+        if settings.groq_api_key:
+            self.runtime_backend = "groq"
+            return
+
         try:
             transformers = import_module("transformers")
             self.auto_tokenizer_cls = transformers.AutoTokenizer
@@ -122,6 +126,42 @@ class LLMService:
         payload = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
         return f"data: {payload}\n\n"
 
+    async def _generate_with_groq(self, request: ChatCompletionRequest) -> GenerationResult:
+        import urllib.request
+
+        messages = [{"role": m.role, "content": m.content} for m in request.messages]
+        model = settings.model_name if settings.model_name != "distilgpt2" else "llama-3.1-8b-instant"
+        payload = json.dumps({
+            "model": model,
+            "messages": messages,
+            "max_tokens": request.max_tokens,
+            "temperature": request.temperature,
+            "stream": False,
+        }).encode()
+
+        req = urllib.request.Request(
+            "https://api.groq.com/openai/v1/chat/completions",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {settings.groq_api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        def _call() -> dict:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return json.loads(resp.read())
+
+        data = await asyncio.to_thread(_call)
+        content = data["choices"][0]["message"]["content"]
+        usage = data.get("usage", {})
+        return GenerationResult(
+            text=content,
+            prompt_tokens=usage.get("prompt_tokens", self._token_estimate(" ".join(m.content for m in request.messages))),
+            completion_tokens=usage.get("completion_tokens", self._token_estimate(content)),
+        )
+
     async def _generate_with_vllm(self, request: ChatCompletionRequest) -> GenerationResult:
         if self.engine is None:
             raise HTTPException(status_code=503, detail="Model engine is not initialized")
@@ -195,6 +235,8 @@ class LLMService:
             start = time.time()
             if self.runtime_backend == "mock":
                 generation = await self._generate_with_mock(request)
+            elif self.runtime_backend == "groq":
+                generation = await self._generate_with_groq(request)
             elif self.runtime_backend == "vllm":
                 generation = await self._generate_with_vllm(request)
             else:
@@ -243,6 +285,14 @@ class LLMService:
             if self.runtime_backend == "mock":
                 user_content = " ".join([m.content for m in request.messages if m.role == "user"]).strip()
                 final_text = f"[mock-response] Model '{settings.model_name}' received: {user_content[:200]}"
+            elif self.runtime_backend == "groq":
+                generation = await self._generate_with_groq(request)
+                final_text = generation.text
+                parts = final_text.split(" ")
+                for index, part in enumerate(parts):
+                    token = part if index == len(parts) - 1 else f"{part} "
+                    if token:
+                        yield self._sse({"id": response_id, "object": "chat.completion.chunk", "created": created, "model": model_name, "choices": [{"index": 0, "delta": {"content": token}, "finish_reason": None}]})
                 parts = final_text.split(" ")
                 for index, part in enumerate(parts):
                     token = part if index == len(parts) - 1 else f"{part} "
