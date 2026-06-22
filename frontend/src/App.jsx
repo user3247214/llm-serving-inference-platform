@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "https://llm-serving-inference-platform.onrender.com";
 const DEFAULT_MODEL =
-  import.meta.env.VITE_MODEL_NAME || "distilgpt2";
+  import.meta.env.VITE_MODEL_NAME || "google/flan-t5-small";
 
 function formatLatency(startMs, endMs) {
   return `${Math.max(1, endMs - startMs)} ms`;

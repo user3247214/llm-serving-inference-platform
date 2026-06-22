@@ -35,6 +35,8 @@ class LLMService:
         self.hf_model = None
         self.auto_tokenizer_cls = None
         self.auto_model_cls = None
+        self.auto_seq2seq_cls = None
+        self.is_encoder_decoder = False
         self.runtime_backend = "uninitialized"
         self.semaphore = asyncio.Semaphore(settings.max_concurrent_requests)
 
@@ -47,6 +49,7 @@ class LLMService:
             transformers = import_module("transformers")
             self.auto_tokenizer_cls = transformers.AutoTokenizer
             self.auto_model_cls = transformers.AutoModelForCausalLM
+            self.auto_seq2seq_cls = transformers.AutoModelForSeq2SeqLM
         except Exception:
             self.runtime_backend = "mock"
             return
@@ -74,10 +77,19 @@ class LLMService:
         try:
             import torch
 
-            self.hf_model = self.auto_model_cls.from_pretrained(
-                settings.model_name,
-                trust_remote_code=settings.trust_remote_code,
-            )
+            if "flan-t5" in settings.model_name.lower() and self.auto_seq2seq_cls is not None:
+                self.hf_model = self.auto_seq2seq_cls.from_pretrained(
+                    settings.model_name,
+                    trust_remote_code=settings.trust_remote_code,
+                )
+                self.is_encoder_decoder = True
+            else:
+                self.hf_model = self.auto_model_cls.from_pretrained(
+                    settings.model_name,
+                    trust_remote_code=settings.trust_remote_code,
+                )
+                self.is_encoder_decoder = False
+
             self.hf_model.to(torch.device("cpu"))
             self.hf_model.eval()
             self.runtime_backend = "transformers"
@@ -92,13 +104,17 @@ class LLMService:
 
     def _build_prompt(self, request: ChatCompletionRequest) -> str:
         assert self.tokenizer is not None
+        latest_user = next((m.content for m in reversed(request.messages) if m.role == "user"), "")
+
+        if self.is_encoder_decoder:
+            return f"Answer briefly and clearly: {latest_user}"
+
         messages = [message.model_dump() for message in request.messages]
         chat_template = getattr(self.tokenizer, "chat_template", None)
         if chat_template:
             return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
         # Plain causal models (e.g. distilgpt2) perform better with a short single-turn instruction.
-        latest_user = next((m.content for m in reversed(request.messages) if m.role == "user"), "")
         return (
             "You are a concise helpful assistant. Reply in one short sentence.\n"
             f"User: {latest_user}\n"
@@ -183,16 +199,27 @@ class LLMService:
 
             inputs = self.tokenizer(prompt, return_tensors="pt")
             with torch.no_grad():
-                output_ids = self.hf_model.generate(
-                    **inputs,
-                    max_new_tokens=min(request.max_tokens, 64),
-                    do_sample=False,
-                    repetition_penalty=1.2,
-                    no_repeat_ngram_size=4,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                )
+                if self.is_encoder_decoder:
+                    output_ids = self.hf_model.generate(
+                        **inputs,
+                        max_new_tokens=min(request.max_tokens, 48),
+                        do_sample=False,
+                        num_beams=4,
+                        early_stopping=True,
+                        no_repeat_ngram_size=3,
+                    )
+                    generated_ids = output_ids[0]
+                else:
+                    output_ids = self.hf_model.generate(
+                        **inputs,
+                        max_new_tokens=min(request.max_tokens, 64),
+                        do_sample=False,
+                        repetition_penalty=1.2,
+                        no_repeat_ngram_size=4,
+                        pad_token_id=self.tokenizer.eos_token_id,
+                    )
+                    generated_ids = output_ids[0][inputs["input_ids"].shape[-1] :]
 
-            generated_ids = output_ids[0][inputs["input_ids"].shape[-1] :]
             return self.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
 
         final_output = await asyncio.to_thread(_run_generation)
