@@ -92,6 +92,7 @@ export default function App() {
         const decoder = new TextDecoder("utf-8");
         let buffer = "";
         let streamUsage = null;
+        let sawDone = false;
 
         while (true) {
           const { value, done } = await reader.read();
@@ -111,10 +112,16 @@ export default function App() {
 
             for (const line of lines) {
               if (line === "[DONE]") {
-                continue;
+                sawDone = true;
+                break;
               }
 
-              const parsed = JSON.parse(line);
+              let parsed;
+              try {
+                parsed = JSON.parse(line);
+              } catch {
+                continue;
+              }
               const delta = parsed?.choices?.[0]?.delta?.content || "";
               if (parsed?.usage) {
                 streamUsage = parsed.usage;
@@ -129,6 +136,19 @@ export default function App() {
                 });
               }
             }
+
+            if (sawDone) {
+              break;
+            }
+          }
+
+          if (sawDone) {
+            try {
+              await reader.cancel();
+            } catch {
+              // Ignore cancellation errors when stream already ended server-side.
+            }
+            break;
           }
         }
 
