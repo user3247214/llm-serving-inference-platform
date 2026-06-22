@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     port: int = 8000
     cors_origins: str = "*"
 
-    model_name: str = "google/flan-t5-small"
+    model_name: str = "sshleifer/tiny-gpt2"
     quantization: str | None = "awq"
     dtype: str = "auto"
     tensor_parallel_size: int = 1
