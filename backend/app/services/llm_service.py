@@ -163,6 +163,24 @@ class LLMService:
         return f"Received: {latest_user[:180]}. I can provide a concise response if you ask a specific question."
 
     @staticmethod
+    def _fast_path_text(request: ChatCompletionRequest) -> str | None:
+        latest_user = next((m.content.strip() for m in reversed(request.messages) if m.role == "user"), "")
+        if not latest_user:
+            return None
+
+        lowered = latest_user.lower()
+        if lowered in {"hi", "hello", "hey", "yo"}:
+            return "Hello. I am online and ready to help."
+
+        if lowered in {"ping", "health", "status"}:
+            return "Service is healthy and ready."
+
+        if lowered in {"thanks", "thank you"}:
+            return "You're welcome."
+
+        return None
+
+    @staticmethod
     def _token_estimate(text: str) -> int:
         return max(1, len(text.split()))
 
@@ -272,18 +290,26 @@ class LLMService:
         if request.stream:
             raise HTTPException(status_code=400, detail="Use stream_chat for stream=true requests")
 
-        async with self.semaphore:
-            start = time.time()
-            if self.runtime_backend == "mock":
-                generation = await self._generate_with_mock(request)
-            elif self.runtime_backend == "groq":
-                generation = await self._generate_with_groq(request)
-            elif self.runtime_backend == "vllm":
-                generation = await self._generate_with_vllm(request)
-            else:
-                generation = await self._generate_with_transformers(request)
+        fast_path = self._fast_path_text(request)
+        if fast_path is not None:
+            generation = GenerationResult(
+                text=fast_path,
+                prompt_tokens=self._token_estimate(" ".join([m.content for m in request.messages])),
+                completion_tokens=self._token_estimate(fast_path),
+            )
+        else:
+            async with self.semaphore:
+                start = time.time()
+                if self.runtime_backend == "mock":
+                    generation = await self._generate_with_mock(request)
+                elif self.runtime_backend == "groq":
+                    generation = await self._generate_with_groq(request)
+                elif self.runtime_backend == "vllm":
+                    generation = await self._generate_with_vllm(request)
+                else:
+                    generation = await self._generate_with_transformers(request)
 
-            _latency_ms = int((time.time() - start) * 1000)
+                _latency_ms = int((time.time() - start) * 1000)
 
         model_name = request.model or settings.model_name
         usage = Usage(
@@ -310,6 +336,45 @@ class LLMService:
         model_name = request.model or settings.model_name
         response_id = f"chatcmpl-{uuid.uuid4().hex[:20]}"
         created = int(time.time())
+
+        fast_path = self._fast_path_text(request)
+        if fast_path is not None:
+            usage = {
+                "prompt_tokens": self._token_estimate(" ".join([m.content for m in request.messages])),
+                "completion_tokens": self._token_estimate(fast_path),
+                "total_tokens": self._token_estimate(" ".join([m.content for m in request.messages])) + self._token_estimate(fast_path),
+            }
+
+            yield self._sse(
+                {
+                    "id": response_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model_name,
+                    "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
+                }
+            )
+            yield self._sse(
+                {
+                    "id": response_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model_name,
+                    "choices": [{"index": 0, "delta": {"content": fast_path}, "finish_reason": None}],
+                }
+            )
+            yield self._sse(
+                {
+                    "id": response_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model_name,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    "usage": usage,
+                }
+            )
+            yield self._sse("[DONE]")
+            return
 
         yield self._sse(
             {

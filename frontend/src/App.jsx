@@ -62,7 +62,7 @@ export default function App() {
           messages: requestMessages,
           temperature: 0.2,
           top_p: 0.9,
-          max_tokens: 64,
+          max_tokens: 32,
           stream: streamMode,
         }),
       });
