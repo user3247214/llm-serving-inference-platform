@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "https://llm-serving-inference-platform.onrender.com";
 const DEFAULT_MODEL =
   import.meta.env.VITE_MODEL_NAME || "distilgpt2";
 
@@ -19,7 +20,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [lastStats, setLastStats] = useState(null);
   const [error, setError] = useState("");
-  const [streamMode, setStreamMode] = useState(true);
+  const [streamMode, setStreamMode] = useState(false);
 
   const tokenSummary = useMemo(() => {
     if (!lastStats) {
@@ -59,9 +60,9 @@ export default function App() {
         body: JSON.stringify({
           model: DEFAULT_MODEL,
           messages: requestMessages,
-          temperature: 0.7,
-          top_p: 0.95,
-          max_tokens: 512,
+          temperature: 0.2,
+          top_p: 0.9,
+          max_tokens: 64,
           stream: streamMode,
         }),
       });

@@ -111,7 +111,14 @@ class LLMService:
         for marker in ["\nUser:", "\nuser:", "\nAssistant:", "\nassistant:"]:
             if marker in cleaned:
                 cleaned = cleaned.split(marker, 1)[0].strip()
-        return cleaned.strip('" ').strip()
+        cleaned = cleaned.strip('" ').strip()
+
+        # Keep fallback-model output short and readable.
+        words = cleaned.split()
+        if len(words) > 40:
+            cleaned = " ".join(words[:40]).strip()
+
+        return cleaned
 
     @staticmethod
     def _token_estimate(text: str) -> int:
@@ -178,12 +185,10 @@ class LLMService:
             with torch.no_grad():
                 output_ids = self.hf_model.generate(
                     **inputs,
-                    max_new_tokens=request.max_tokens,
-                    do_sample=request.temperature > 0,
-                    temperature=max(0.01, request.temperature),
-                    top_p=max(0.01, request.top_p),
-                    repetition_penalty=1.1,
-                    no_repeat_ngram_size=3,
+                    max_new_tokens=min(request.max_tokens, 64),
+                    do_sample=False,
+                    repetition_penalty=1.2,
+                    no_repeat_ngram_size=4,
                     pad_token_id=self.tokenizer.eos_token_id,
                 )
 
